@@ -29,6 +29,7 @@ function AppContent() {
     return 'dashboard';
   });
   const [activeGoalSubTab, setActiveGoalSubTab] = useState('fitness');
+  const [activeSettingsSubTab, setActiveSettingsSubTab] = useState('preferences');
   const [serverHealth, setServerHealth] = useState(null);
   const [isCollapsed, setIsCollapsed] = useState(() => {
     try {
@@ -81,8 +82,11 @@ function AppContent() {
       setActiveTab('journal');
     } else if (cleanHash === '#/reports') {
       setActiveTab('reports');
-    } else if (cleanHash === '#/settings') {
+    } else if (cleanHash.startsWith('#/settings')) {
+      const parts = cleanHash.split('/');
+      const sub = parts[2] || 'preferences';
       setActiveTab('settings');
+      setActiveSettingsSubTab(['preferences', 'reminders', 'planner'].includes(sub) ? sub : 'preferences');
     } else {
       setActiveTab('dashboard');
       if (cleanHash !== '#/dashboard') {
@@ -147,6 +151,7 @@ function AppContent() {
       {/* Fixed Vertical Left Sidebar */}
       <Sidebar
         activeTab={activeTab}
+        activeSettingsSubTab={activeSettingsSubTab}
         serverHealth={serverHealth}
         isCollapsed={isCollapsed}
         onToggleCollapse={handleToggleCollapse}
@@ -251,7 +256,14 @@ function AppContent() {
             {activeTab === 'focus' && <FocusMode />}
             {activeTab === 'journal' && <Journal />}
             {activeTab === 'reports' && <ProgressReports />}
-            {activeTab === 'settings' && <Settings />}
+            {activeTab === 'settings' && (
+              <Settings
+                activeSubTab={activeSettingsSubTab}
+                onSubTabChange={(sub) => {
+                  window.location.hash = `#/settings/${sub}`;
+                }}
+              />
+            )}
           </div>
         </main>
 

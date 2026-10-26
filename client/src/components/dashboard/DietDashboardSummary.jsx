@@ -172,6 +172,34 @@ export default function DietDashboardSummary({ selectedDate }) {
           </div>
         </div>
       </div>
+
+      {/* Planned vs Confirmed Meals Footnote */}
+      <div
+        style={{
+          marginTop: 'var(--space-3)',
+          paddingTop: 'var(--space-2)',
+          borderTop: '1px solid var(--color-border)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 'var(--space-2)',
+          fontSize: '11px',
+          color: 'var(--color-muted-text)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+          <span>
+            📋 <strong>{Object.entries(nutritionState.mealPlan?.[selectedDate] || {}).filter(([_, v]) => Boolean(v)).length}</strong> Planned Meals (Estimates)
+          </span>
+          <span>
+            ✓ <strong>{consumedTotals.mealCount}</strong> Confirmed Eaten
+          </span>
+        </div>
+        <div style={{ fontStyle: 'italic' }}>
+          *Only confirmed eaten meals count toward actual intake. Planned meals are estimates and never double-counted.
+        </div>
+      </div>
     </Card>
   );
 }

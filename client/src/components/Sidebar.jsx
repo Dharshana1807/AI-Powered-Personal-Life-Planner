@@ -1,23 +1,48 @@
 import React from 'react';
 
-export const NAV_ITEMS = [
-  { id: 'dashboard', label: 'Dashboard', icon: '📊', path: '#/dashboard' },
-  { id: 'planner', label: 'Daily Planner', icon: '📅', path: '#/planner' },
-  { id: 'assistant', label: 'AI Assistant', icon: '🤖', path: '#/assistant' },
-  { id: 'goals', label: 'Goal Tracking', icon: '🎯', path: '#/goals' },
-  { id: 'study', label: 'Study Planner', icon: '📚', path: '#/study' },
-  { id: 'career', label: 'Career Planner', icon: '💼', path: '#/career' },
-  { id: 'nutrition', label: 'Diet & Nutrition', icon: '🥗', path: '#/nutrition' },
-  { id: 'fitness', label: 'Fitness Planner', icon: '💪', path: '#/fitness' },
-  { id: 'habits', label: 'Habit Tracker', icon: '⚡', path: '#/habits' },
-  { id: 'focus', label: 'Focus Mode', icon: '⏱️', path: '#/focus' },
-  { id: 'journal', label: 'Journal', icon: '📖', path: '#/journal' },
-  { id: 'reports', label: 'Progress Reports', icon: '📈', path: '#/reports' },
-  { id: 'settings', label: 'Settings', icon: '⚙️', path: '#/settings' },
+export const NAV_SECTIONS = [
+  {
+    title: 'Overview',
+    items: [
+      { id: 'dashboard', label: 'Dashboard', icon: '📊', path: '#/dashboard' },
+      { id: 'planner', label: 'Daily Planner', icon: '📅', path: '#/planner' },
+      { id: 'assistant', label: 'AI Assistant', icon: '🤖', path: '#/assistant' },
+    ],
+  },
+  {
+    title: 'Personal Growth',
+    items: [
+      { id: 'goals', label: 'Goal Tracking', icon: '🎯', path: '#/goals' },
+      { id: 'study', label: 'Study Planner', icon: '📚', path: '#/study' },
+      { id: 'career', label: 'Career Planner', icon: '💼', path: '#/career' },
+      { id: 'nutrition', label: 'Diet & Nutrition', icon: '🥗', path: '#/nutrition' },
+      { id: 'fitness', label: 'Fitness Planner', icon: '💪', path: '#/fitness' },
+    ],
+  },
+  {
+    title: 'Daily Wellness',
+    items: [
+      { id: 'habits', label: 'Habit Tracker', icon: '⚡', path: '#/habits' },
+      { id: 'focus', label: 'Focus Mode', icon: '⏱️', path: '#/focus' },
+      { id: 'journal', label: 'Journal', icon: '📖', path: '#/journal' },
+      { id: 'reports', label: 'Progress Reports', icon: '📈', path: '#/reports' },
+    ],
+  },
+  {
+    title: 'Settings',
+    items: [
+      { id: 'settings-preferences', subtab: 'preferences', label: 'Preferences', icon: '⚙️', path: '#/settings/preferences' },
+      { id: 'settings-reminders', subtab: 'reminders', label: 'Reminder Settings', icon: '🔔', path: '#/settings/reminders' },
+      { id: 'settings-planner', subtab: 'planner', label: 'Planner Settings', icon: '🛠️', path: '#/settings/planner' },
+    ],
+  },
 ];
+
+export const NAV_ITEMS = NAV_SECTIONS.flatMap((s) => s.items);
 
 export default function Sidebar({
   activeTab = 'dashboard',
+  activeSettingsSubTab = 'preferences',
   serverHealth = null,
   isCollapsed = false,
   onToggleCollapse = () => {},
@@ -25,6 +50,16 @@ export default function Sidebar({
   onCloseMobile = () => {},
 }) {
   const isAiOnline = Boolean(serverHealth?.geminiConfigured);
+
+  const isItemActive = (item) => {
+    if (item.subtab) {
+      return activeTab === 'settings' && activeSettingsSubTab === item.subtab;
+    }
+    if (item.id === 'assistant') {
+      return activeTab === 'assistant' || activeTab === 'chatbot';
+    }
+    return activeTab === item.id;
+  };
 
   return (
     <>
@@ -65,7 +100,7 @@ export default function Sidebar({
         className={mobileOpen ? 'sidebar-mobile-open' : ''}
       >
         {/* Top: Brand Header & Collapse Toggle */}
-        <div>
+        <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 }}>
           <div
             style={{
               padding: isCollapsed ? 'var(--space-4) var(--space-2)' : 'var(--space-4) var(--space-4)',
@@ -74,6 +109,7 @@ export default function Sidebar({
               alignItems: 'center',
               justifyContent: isCollapsed ? 'center' : 'space-between',
               minHeight: '68px',
+              flexShrink: 0,
             }}
           >
             <a
@@ -142,7 +178,7 @@ export default function Sidebar({
 
           {/* Toggle button when collapsed */}
           {isCollapsed && (
-            <div style={{ textAlign: 'center', padding: '6px 0', borderBottom: '1px solid var(--color-border)' }}>
+            <div style={{ textAlign: 'center', padding: '6px 0', borderBottom: '1px solid var(--color-border)', flexShrink: 0 }}>
               <button
                 type="button"
                 onClick={onToggleCollapse}
@@ -162,54 +198,87 @@ export default function Sidebar({
             </div>
           )}
 
-          {/* Middle: Navigation Items */}
+          {/* Middle: Organized Navigation Sections */}
           <nav
             style={{
-              padding: 'var(--space-3) var(--space-2)',
+              padding: 'var(--space-2) var(--space-2)',
               display: 'flex',
               flexDirection: 'column',
-              gap: '3px',
+              gap: 'var(--space-3)',
               overflowY: 'auto',
-              maxHeight: 'calc(100vh - 160px)',
+              flex: 1,
             }}
           >
-            {NAV_ITEMS.map((item) => {
-              const isActive = activeTab === item.id || (item.id === 'assistant' && activeTab === 'chatbot');
-              return (
-                <a
-                  key={item.id}
-                  href={item.path}
-                  onClick={onCloseMobile}
-                  title={item.label}
-                  id={`nav-link-${item.id}`}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: isCollapsed ? '0' : 'var(--space-3)',
-                    justifyContent: isCollapsed ? 'center' : 'flex-start',
-                    padding: isCollapsed ? '10px 0' : '9px 12px',
-                    borderRadius: 'var(--radius-md)',
-                    textDecoration: 'none',
-                    fontSize: 'var(--font-sm)',
-                    fontWeight: isActive ? 700 : 500,
-                    backgroundColor: isActive ? 'var(--color-primary)' : 'transparent',
-                    color: isActive ? '#000000' : 'var(--color-text)',
-                    border: isActive ? '1px solid var(--color-primary-hover)' : '1px solid transparent',
-                    transition: 'background-color var(--transition-fast)',
-                    boxShadow: isActive ? 'var(--shadow-sm)' : 'none',
-                  }}
-                >
-                  <span style={{ fontSize: '18px', flexShrink: 0 }} aria-hidden="true">
-                    {item.icon}
-                  </span>
-                  {!isCollapsed && (
-                    <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {item.label}
-                    </span>
-                  )}
-                </a>
-              );
-            })}
+            {NAV_SECTIONS.map((section, sIdx) => (
+              <div key={section.title} style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                {!isCollapsed && (
+                  <div
+                    style={{
+                      fontSize: '10px',
+                      fontWeight: 800,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.06em',
+                      color: 'var(--color-muted-text)',
+                      padding: '4px 10px 2px',
+                      marginTop: sIdx > 0 ? '4px' : '0',
+                    }}
+                  >
+                    {section.title}
+                  </div>
+                )}
+                {isCollapsed && sIdx > 0 && (
+                  <div style={{ height: '1px', backgroundColor: 'var(--color-border)', margin: '4px 8px' }} />
+                )}
+
+                {section.items.map((item) => {
+                  const isActive = isItemActive(item);
+                  return (
+                    <a
+                      key={item.id}
+                      href={item.path}
+                      onClick={onCloseMobile}
+                      title={item.label}
+                      id={`nav-link-${item.id}`}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: isCollapsed ? '0' : 'var(--space-3)',
+                        justifyContent: isCollapsed ? 'center' : 'flex-start',
+                        padding: isCollapsed ? '9px 0' : '8px 12px',
+                        borderRadius: 'var(--radius-md)',
+                        textDecoration: 'none',
+                        fontSize: 'var(--font-sm)',
+                        fontWeight: isActive ? 700 : 500,
+                        backgroundColor: isActive ? 'var(--color-primary)' : 'transparent',
+                        color: isActive ? '#000000' : 'var(--color-text)',
+                        border: isActive ? '1px solid var(--color-primary-hover)' : '1px solid transparent',
+                        transition: 'background-color var(--transition-fast)',
+                        boxShadow: isActive ? 'var(--shadow-sm)' : 'none',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isActive) {
+                          e.currentTarget.style.backgroundColor = 'var(--color-surface-hover)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!isActive) {
+                          e.currentTarget.style.backgroundColor = 'transparent';
+                        }
+                      }}
+                    >
+                      <span style={{ fontSize: '18px', flexShrink: 0, width: '22px', textAlign: 'center' }} aria-hidden="true">
+                        {item.icon}
+                      </span>
+                      {!isCollapsed && (
+                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {item.label}
+                        </span>
+                      )}
+                    </a>
+                  );
+                })}
+              </div>
+            ))}
           </nav>
         </div>
 

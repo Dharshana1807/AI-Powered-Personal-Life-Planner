@@ -652,24 +652,33 @@ export function getDefaultSettings() {
   };
 }
 
+const memoryFallbackStore = new Map();
+
 function loadSafeKey(key, fallbackFn) {
-  if (typeof window === 'undefined' || !window.localStorage) return fallbackFn();
-  try {
-    const raw = window.localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallbackFn();
-  } catch (err) {
-    return fallbackFn();
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallbackFn();
+    } catch (err) {
+      return fallbackFn();
+    }
   }
+  return memoryFallbackStore.has(key)
+    ? JSON.parse(JSON.stringify(memoryFallbackStore.get(key)))
+    : fallbackFn();
 }
 
 function saveSafeKey(key, data) {
-  if (typeof window === 'undefined' || !window.localStorage) return false;
-  try {
-    window.localStorage.setItem(key, JSON.stringify(data));
-    return true;
-  } catch (err) {
-    return false;
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      window.localStorage.setItem(key, JSON.stringify(data));
+      return true;
+    } catch (err) {
+      return false;
+    }
   }
+  memoryFallbackStore.set(key, JSON.parse(JSON.stringify(data)));
+  return true;
 }
 
 // Module-specific getters & setters
@@ -713,6 +722,223 @@ export function recordChangeEvent({ action, summary, author = 'user', date = new
   if (history.length > 100) history.pop(); // keep last 100 events
   saveChangeHistory(history);
   return entry;
+}
+
+export const SCHEDULE_VERSIONS_STORAGE_KEY = 'adaptive_planner_schedule_versions_v1';
+export const loadScheduleVersions = () => loadSafeKey(SCHEDULE_VERSIONS_STORAGE_KEY, () => []);
+export const saveScheduleVersions = (versions) => saveSafeKey(SCHEDULE_VERSIONS_STORAGE_KEY, versions);
+
+/**
+ * Appends a schedule version snapshot to allow restoring earlier timetable states.
+ * Preserves completed task records and protects data integrity.
+ */
+export function recordScheduleVersion({
+  date,
+  author = 'User',
+  action = 'Manual Edit',
+  summary = '',
+  plan,
+  proposalApplied = false,
+}) {
+  if (!date || !plan) return null;
+  const versions = loadScheduleVersions();
+  const entry = {
+    id: `ver_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    date,
+    timestamp: new Date().toISOString(),
+    author, // 'User' | 'Gemini AI'
+    action, // 'Manual Edit' | 'AI Proposal Applied' | 'Regenerated'
+    summary: summary || `${action} for ${date}`,
+    proposalApplied: Boolean(proposalApplied),
+    tasksCount: (plan.tasks || []).length,
+    planSnapshot: {
+      date: plan.date || date,
+      wakeTime: plan.wakeTime,
+      bedTime: plan.bedTime,
+      status: plan.status,
+      tasks: (plan.tasks || []).map((t) => ({ ...t })),
+      schedule: plan.schedule ? JSON.parse(JSON.stringify(plan.schedule)) : null,
+    },
+  };
+  versions.unshift(entry);
+  if (versions.length > 50) versions.pop();
+  saveScheduleVersions(versions);
+
+  // Also record in audit change history
+  recordChangeEvent({
+    action,
+    summary: summary || `${action} (${(plan.tasks || []).length} tasks)`,
+    author,
+    date: entry.timestamp,
+  });
+
+  return entry;
+}
+
+/**
+ * Restores an earlier schedule version without erasing completed task records or unrelated data.
+ */
+export function restoreScheduleVersion(versionId, currentPlans = {}) {
+  const versions = loadScheduleVersions();
+  const targetVersion = versions.find((v) => v.id === versionId);
+  if (!targetVersion || !targetVersion.planSnapshot) {
+    return { success: false, error: 'Schedule version not found in history.' };
+  }
+  const snapshot = targetVersion.planSnapshot;
+  const targetDate = snapshot.date;
+  const existingPlan = currentPlans[targetDate] || {};
+
+  // Preserve completion status and timestamps of already-completed tasks
+  const completedTaskMap = new Map();
+  (existingPlan.tasks || []).forEach((t) => {
+    if (t.status === 'completed') {
+      completedTaskMap.set(t.id, t.completedAt || new Date().toISOString());
+    }
+  });
+
+  const restoredTasks = (snapshot.tasks || []).map((t) => {
+    if (completedTaskMap.has(t.id)) {
+      return {
+        ...t,
+        status: 'completed',
+        completedAt: completedTaskMap.get(t.id),
+      };
+    }
+    return { ...t };
+  });
+
+  const restoredPlan = {
+    ...existingPlan,
+    ...snapshot,
+    date: targetDate,
+    tasks: restoredTasks,
+    updatedAt: new Date().toISOString(),
+  };
+
+  recordChangeEvent({
+    action: 'Schedule Restored',
+    summary: `Restored version from ${new Date(targetVersion.timestamp).toLocaleTimeString()} (${targetVersion.action})`,
+    author: 'User',
+  });
+
+  return {
+    success: true,
+    targetDate,
+    restoredPlan,
+    version: targetVersion,
+  };
+}
+
+/**
+ * Gathers upcoming reminders from saved records (study deadlines, assignments, career milestones, habits, planned meals).
+ */
+export function getUpcomingReminders(targetDate, nowTimeStr = '00:00') {
+  const reminders = [];
+  const settings = loadAppSettings();
+  const reminderPrefs = settings.reminders || {};
+
+  // 1. Study assignments & exams
+  if (reminderPrefs.deadlines !== false) {
+    const study = loadStudyData();
+    (study.assignments || []).forEach((asgn) => {
+      if (!asgn.completed) {
+        reminders.push({
+          id: `rem_asgn_${asgn.id}`,
+          type: 'assignment',
+          category: 'Education',
+          title: asgn.title,
+          date: asgn.deadlineDate || targetDate,
+          time: asgn.deadlineTime || '23:59',
+          priority: asgn.priority || 'High',
+          icon: '📚',
+          sourceUrl: '#/study',
+        });
+      }
+    });
+
+    (study.subjects || []).forEach((sub) => {
+      if (sub.examDate) {
+        reminders.push({
+          id: `rem_exam_${sub.id}`,
+          type: 'exam',
+          category: 'Education',
+          title: `${sub.name} Exam`,
+          date: sub.examDate,
+          time: '09:00',
+          priority: 'High',
+          icon: '🎓',
+          sourceUrl: '#/study',
+        });
+      }
+    });
+  }
+
+  // 2. Career milestones
+  if (reminderPrefs.milestones !== false) {
+    const career = loadCareerData();
+    (career.milestones || []).forEach((ms) => {
+      if (!ms.completed) {
+        reminders.push({
+          id: `rem_ms_${ms.id}`,
+          type: 'milestone',
+          category: 'Career',
+          title: ms.title,
+          date: ms.deadlineDate || targetDate,
+          time: '18:00',
+          priority: 'Medium',
+          icon: '💼',
+          sourceUrl: '#/career',
+        });
+      }
+    });
+  }
+
+  // 3. Daily Habits
+  if (reminderPrefs.habits !== false) {
+    const habits = loadHabitsData();
+    (habits.items || []).forEach((hab) => {
+      const isDone = habits.history?.[hab.id]?.[targetDate];
+      if (!isDone) {
+        reminders.push({
+          id: `rem_hab_${hab.id}`,
+          type: 'habit',
+          category: 'Wellness',
+          title: hab.name,
+          date: targetDate,
+          time: hab.preferredTime || '12:00',
+          priority: 'Normal',
+          icon: '⚡',
+          sourceUrl: '#/habits',
+        });
+      }
+    });
+  }
+
+  // 4. Planned Meals
+  if (reminderPrefs.meals) {
+    const routine = loadSavedRoutine();
+    (routine.meals || []).forEach((meal, idx) => {
+      reminders.push({
+        id: `rem_meal_${idx}`,
+        type: 'meal',
+        category: 'Nutrition',
+        title: `${meal.name || 'Meal'}`,
+        date: targetDate,
+        time: meal.start || '12:30',
+        priority: 'Normal',
+        icon: '🥗',
+        sourceUrl: '#/nutrition',
+      });
+    });
+  }
+
+  // Sort chronologically by date then time
+  reminders.sort((a, b) => {
+    if (a.date !== b.date) return (a.date || '').localeCompare(b.date || '');
+    return (a.time || '').localeCompare(b.time || '');
+  });
+
+  return reminders;
 }
 
 /**

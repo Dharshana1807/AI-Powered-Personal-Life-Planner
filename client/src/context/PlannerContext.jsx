@@ -5,6 +5,8 @@ import {
   saveStoredState,
   createInitialState,
   CURRENT_SCHEMA_VERSION,
+  recordScheduleVersion,
+  restoreScheduleVersion,
 } from '../utils/storage.js';
 import {
   addTask as pureAddTask,
@@ -54,9 +56,9 @@ export function PlannerProvider({ children }) {
     [store]
   );
 
-  // Save plan for date (full plan update, e.g. from planning form or schedule generator)
+  // Save plan for date (full plan update, e.g. from planning form, schedule generator, or AI proposal)
   const savePlan = useCallback(
-    (date, planData) => {
+    (date, planData, meta = {}) => {
       const currentStore = store;
       const snapshot = JSON.parse(JSON.stringify(currentStore));
 
@@ -86,6 +88,23 @@ export function PlannerProvider({ children }) {
 
       setStore(nextStore);
       setStorageError(null);
+
+      // Record schedule version snapshot for undo / restore history
+      if (planData.schedule || meta.recordVersion) {
+        try {
+          recordScheduleVersion({
+            date,
+            author: meta.author || 'User',
+            action: meta.action || (meta.author === 'Gemini AI' ? 'AI Proposal Applied' : 'Schedule Saved'),
+            summary: meta.summary || `${meta.author === 'Gemini AI' ? 'AI' : 'Manual'} timetable for ${date}`,
+            plan: planData,
+            proposalApplied: Boolean(meta.proposalApplied),
+          });
+        } catch (err) {
+          console.warn('Could not record schedule version:', err);
+        }
+      }
+
       return true;
     },
     [store]
@@ -308,6 +327,35 @@ export function PlannerProvider({ children }) {
     setFormDraft(null);
   }, []);
 
+  // Restore an earlier schedule version from history
+  const restoreScheduleVersionOp = useCallback(
+    (versionId) => {
+      const result = restoreScheduleVersion(versionId, store.plans);
+      if (!result.success) {
+        setStorageError(result.error);
+        return false;
+      }
+
+      const saveSuccess = savePlan(result.targetDate, result.restoredPlan, {
+        recordVersion: true,
+        action: 'Schedule Restored',
+        author: 'User',
+        summary: `Restored version from ${new Date(result.version.timestamp).toLocaleTimeString()}`,
+      });
+
+      if (saveSuccess) {
+        setToast({
+          message: `Restored schedule version from ${new Date(result.version.timestamp).toLocaleTimeString()}`,
+          type: 'success',
+          showUndo: true,
+        });
+        return true;
+      }
+      return false;
+    },
+    [store, savePlan]
+  );
+
   const value = {
     selectedDate,
     setSelectedDate,
@@ -329,7 +377,8 @@ export function PlannerProvider({ children }) {
     rescheduleTaskOp,
     moveTaskToDateOp,
     shortenTaskOp,
-    // Undo & Toast
+    // History & Undo
+    restoreScheduleVersionOp,
     toast,
     dismissToast,
     undoLastAction,

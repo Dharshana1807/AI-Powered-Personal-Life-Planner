@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Card from '../components/common/Card.jsx';
 import Button from '../components/common/Button.jsx';
 import Badge from '../components/common/Badge.jsx';
@@ -12,8 +12,11 @@ import AddTaskModal from '../components/dashboard/AddTaskModal.jsx';
 import MissedTaskModal, { calculateScheduleOverload } from '../components/dashboard/MissedTaskModal.jsx';
 import RoutineSetupModal from '../components/dashboard/RoutineSetupModal.jsx';
 import DietDashboardSummary from '../components/dashboard/DietDashboardSummary.jsx';
+import DailyProgressSummary from '../components/dashboard/DailyProgressSummary.jsx';
+import GoalProgressOverview from '../components/dashboard/GoalProgressOverview.jsx';
+import UpcomingReminders from '../components/dashboard/UpcomingReminders.jsx';
 import DatePicker from '../components/common/DatePicker.jsx';
-import { toLocalISODate, formatLocalDateString, formatTime12h } from '../utils/dateUtils.js';
+import { toLocalISODate, formatLocalDateString, formatTime12h, formatDisplayDate } from '../utils/dateUtils.js';
 import { generateSchedule } from '../utils/scheduler.js';
 import { isTaskOverdue } from '../utils/taskOperations.js';
 import { usePlanner } from '../context/PlannerContext.jsx';
@@ -50,7 +53,7 @@ export default function Dashboard() {
     }
   });
 
-  // Maintain "now" state and refresh every 60 seconds without page refresh per requirement #4
+  // Maintain "now" state and refresh every 60 seconds
   const [now, setNow] = useState(() => {
     const d = new Date();
     return {
@@ -101,6 +104,49 @@ export default function Dashboard() {
     return <Badge type="status" value="pending" label={currentPlan.status} />;
   };
 
+  // Date Navigation Handlers
+  const handlePrevDay = () => {
+    const d = new Date(selectedDate + 'T12:00:00');
+    d.setDate(d.getDate() - 1);
+    setSelectedDate(toLocalISODate(d));
+  };
+
+  const handleNextDay = () => {
+    const d = new Date(selectedDate + 'T12:00:00');
+    d.setDate(d.getDate() + 1);
+    setSelectedDate(toLocalISODate(d));
+  };
+
+  const handleGoToday = () => {
+    setSelectedDate(todayDate);
+  };
+
+  // One-line summary computed live strictly from saved records
+  const planSummaryLine = useMemo(() => {
+    if (!currentPlan || !currentPlan.tasks || currentPlan.tasks.length === 0) {
+      return 'No tasks scheduled yet for this date. Use + Add Task or Generate with Gemini to plan.';
+    }
+    const all = currentPlan.tasks;
+    const scheduled = all.filter((t) => t.scheduledStart && t.scheduledEnd);
+    const completed = all.filter((t) => t.status === 'completed');
+    const totalPlannedMins = scheduled.reduce((acc, t) => acc + (Number(t.durationMinutes) || 0), 0);
+    const hours = Math.floor(totalPlannedMins / 60);
+    const mins = totalPlannedMins % 60;
+    const timeStr = hours > 0 ? (mins > 0 ? `${hours}h ${mins}m` : `${hours}h`) : `${mins}m`;
+
+    if (completed.length === all.length && all.length > 0) {
+      return `🎉 All ${all.length} tasks completed for ${selectedDate} (${timeStr} planned). Excellent consistency!`;
+    }
+
+    const nextUpcoming = scheduled
+      .filter((t) => t.status !== 'completed' && t.status !== 'skipped')
+      .sort((a, b) => (a.scheduledStart || '').localeCompare(b.scheduledStart || ''))[0];
+
+    const nextStr = nextUpcoming ? ` • Next: "${nextUpcoming.name}" at ${formatTime12h(nextUpcoming.scheduledStart)}` : '';
+
+    return `${scheduled.length} task${scheduled.length === 1 ? '' : 's'} scheduled (${timeStr} planned) • ${completed.length} completed${nextStr}`;
+  }, [currentPlan, selectedDate]);
+
   const handleStartPlan = () => {
     setIsFormOpen(true);
   };
@@ -113,7 +159,7 @@ export default function Dashboard() {
     setIsFormOpen(false);
   };
 
-  // Generate directly from Dashboard if details were previously saved without schedule
+  // Generate directly from Dashboard
   const handleGenerateFromDashboard = () => {
     if (!currentPlan) return;
     if (!currentPlan.tasks || currentPlan.tasks.length === 0) {
@@ -135,7 +181,12 @@ export default function Dashboard() {
       tasks: scheduleResult.scheduledTasks,
       status: 'scheduled',
     };
-    savePlan(selectedDate, updatedPlan);
+    savePlan(selectedDate, updatedPlan, {
+      recordVersion: true,
+      action: 'Schedule Generated',
+      author: 'User',
+      summary: `Generated timetable with ${scheduleResult.scheduledTasks.length} tasks`,
+    });
     setNotification({
       type: 'success',
       title: 'Schedule Generated',
@@ -163,7 +214,12 @@ export default function Dashboard() {
       tasks: regeneratePreview.scheduledTasks,
       status: 'scheduled',
     };
-    savePlan(selectedDate, updatedPlan);
+    savePlan(selectedDate, updatedPlan, {
+      recordVersion: true,
+      action: 'Schedule Regenerated',
+      author: 'User',
+      summary: `Regenerated timetable (${regeneratePreview.scheduledTasks.length} tasks)`,
+    });
     setShowRegenerateModal(false);
     setRegeneratePreview(null);
     setNotification({
@@ -251,7 +307,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Page Header with Welcome & Date Selector */}
+      {/* SECTION 1: HEADER & TOOLBAR */}
       <div
         style={{
           display: 'flex',
@@ -263,11 +319,15 @@ export default function Dashboard() {
       >
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-1)' }}>
-            <span style={{ fontSize: 'var(--font-sm)', color: 'var(--color-muted-text)', fontWeight: 600 }}>
+            <span style={{ fontSize: 'var(--font-xs)', color: 'var(--color-muted-text)', fontWeight: 600 }}>
+              Today is {formatLocalDateString(todayDate)} &bull; Planning for:
+            </span>
+            <span style={{ fontSize: 'var(--font-xs)', fontWeight: 800, color: 'var(--color-text)' }}>
               {formatLocalDateString(selectedDate)}
             </span>
             {getStatusBadge()}
           </div>
+
           <h1
             style={{
               fontSize: 'var(--font-3xl)',
@@ -277,37 +337,51 @@ export default function Dashboard() {
               lineHeight: 1.15,
             }}
           >
-            {username ? `Welcome, ${username}` : 'Daily Schedule Dashboard'}
+            {username ? `Welcome, ${username}` : 'Adaptive AI Life Planner'}
           </h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-1)' }}>
-            <p style={{ fontSize: 'var(--font-base)', color: 'var(--color-muted-text)', margin: 0 }}>
-              {username ? `${username}'s plan for today` : 'Your plan for today'}
-            </p>
-            <a
-              href="#/welcome"
-              style={{
-                fontSize: 'var(--font-xs)',
-                color: 'var(--color-muted-text)',
-                textDecoration: 'underline',
-                cursor: 'pointer',
-              }}
-              title="Switch user / Go to welcome page"
-            >
-              (Switch user)
-            </a>
+
+          {/* One-line dynamic summary of the day's plan */}
+          <div
+            style={{
+              marginTop: 'var(--space-1)',
+              fontSize: 'var(--font-sm)',
+              color: 'var(--color-muted-text)',
+              fontWeight: 500,
+              lineHeight: 1.4,
+            }}
+          >
+            {planSummaryLine}
           </div>
         </div>
 
-        {/* Date Selector & Primary Action Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-            <label
-              htmlFor="dashboard-date-picker"
-              style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--color-muted-text)' }}
+        {/* Toolbar: [Date Picker with Prev/Next] [Add Task] [AI ✦] [Regular Routine] [Edit Details] [Regenerate] */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+          {/* Date Navigator: [ ◀ ] [ Date Picker ] [ ▶ ] */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: 'var(--color-surface)', padding: '2px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
+            <button
+              type="button"
+              onClick={handlePrevDay}
+              title="Previous day"
+              aria-label="Previous day"
+              style={{
+                width: '32px',
+                height: '34px',
+                border: 'none',
+                backgroundColor: 'transparent',
+                borderRadius: 'var(--radius-sm)',
+                cursor: 'pointer',
+                fontWeight: 700,
+                fontSize: '13px',
+                color: 'var(--color-text)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
             >
-              PLAN DATE:
-            </label>
-            <div style={{ width: '180px' }}>
+              ◀
+            </button>
+
+            <div style={{ width: '160px' }}>
               <DatePicker
                 id="dashboard-date-picker"
                 value={selectedDate}
@@ -315,67 +389,100 @@ export default function Dashboard() {
                 style={{ marginBottom: 0 }}
               />
             </div>
-          </div>
 
-          {/* Add Task & Plan with AI Button */}
-          {hasScheduledTimetable && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-              <Button
-                variant="outline"
-                size="md"
-                onClick={() => setShowAddTaskModal(true)}
-                data-testid="add-task-header-btn"
-                title="Add task directly to today's schedule"
-              >
-                + Add Task
-              </Button>
+            <button
+              type="button"
+              onClick={handleNextDay}
+              title="Next day"
+              aria-label="Next day"
+              style={{
+                width: '32px',
+                height: '34px',
+                border: 'none',
+                backgroundColor: 'transparent',
+                borderRadius: 'var(--radius-sm)',
+                cursor: 'pointer',
+                fontWeight: 700,
+                fontSize: '13px',
+                color: 'var(--color-text)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              ▶
+            </button>
+
+            {!isToday && (
               <button
                 type="button"
-                onClick={() => {
-                  window.location.hash = '#/assistant';
-                }}
-                aria-label="Plan with AI"
-                title="Plan with AI"
-                data-testid="header-plan-with-ai-btn"
+                onClick={handleGoToday}
+                title="Jump to today"
                 style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  width: '40px',
-                  height: '40px',
-                  padding: 0,
-                  backgroundColor: 'var(--color-surface)',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  backgroundColor: 'var(--color-primary-subtle)',
                   color: 'var(--color-text)',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--color-primary)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '4px 8px',
                   cursor: 'pointer',
-                  fontSize: 'var(--font-lg)',
-                  boxShadow: 'var(--shadow-sm)',
-                  transition: 'all var(--transition-fast)',
-                  flexShrink: 0,
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--color-primary-subtle)';
-                  e.currentTarget.style.borderColor = 'var(--color-primary-hover)';
-                  e.currentTarget.style.transform = 'translateY(-1px)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--color-surface)';
-                  e.currentTarget.style.borderColor = 'var(--color-border)';
-                  e.currentTarget.style.transform = 'none';
-                }}
-                onFocus={(e) => {
-                  e.currentTarget.style.outline = '2px solid var(--color-primary)';
-                  e.currentTarget.style.outlineOffset = '2px';
-                }}
-                onBlur={(e) => {
-                  e.currentTarget.style.outline = 'none';
+                  marginLeft: '2px',
                 }}
               >
-                <span role="img" aria-hidden="true">✨</span>
+                Today
               </button>
-            </div>
-          )}
+            )}
+          </div>
+
+          {/* Add Task Button */}
+          <Button
+            variant="outline"
+            size="md"
+            onClick={() => setShowAddTaskModal(true)}
+            data-testid="add-task-header-btn"
+            title="Add task directly to schedule"
+          >
+            + Add Task
+          </Button>
+
+          {/* AI ✦ shortcut — adjacent to Add Task */}
+          <button
+            type="button"
+            onClick={() => {
+              window.location.hash = '#/assistant';
+            }}
+            aria-label="Open AI Assistant"
+            title="Open Gemini AI Assistant"
+            data-testid="header-plan-with-ai-btn"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '40px',
+              height: '40px',
+              padding: 0,
+              backgroundColor: 'var(--color-primary-subtle)',
+              color: 'var(--color-text)',
+              border: '1px solid var(--color-primary)',
+              borderRadius: 'var(--radius-md)',
+              cursor: 'pointer',
+              fontSize: 'var(--font-lg)',
+              boxShadow: 'var(--shadow-sm)',
+              transition: 'all var(--transition-fast)',
+              flexShrink: 0,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--color-primary)';
+              e.currentTarget.style.transform = 'translateY(-1px)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--color-primary-subtle)';
+              e.currentTarget.style.transform = 'none';
+            }}
+          >
+            <span role="img" aria-hidden="true">✨</span>
+          </button>
 
           {/* Regular Routine Button */}
           <Button
@@ -387,6 +494,7 @@ export default function Dashboard() {
             ⚙️ Regular Routine
           </Button>
 
+          {/* Edit Day's Details */}
           {currentPlan && currentPlan.status !== 'no_plan' ? (
             <Button variant="outline" size="md" onClick={handleStartPlan}>
               ✏️ Edit Day's Details
@@ -411,26 +519,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Browser Local Storage Notice */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 'var(--space-2)',
-          padding: 'var(--space-2) var(--space-4)',
-          backgroundColor: 'var(--color-secondary-subtle)',
-          borderRadius: 'var(--radius-md)',
-          border: '1px solid var(--color-secondary)',
-          fontSize: 'var(--font-xs)',
-          color: 'var(--color-text)',
-        }}
-      >
-        <span>🔒</span>
-        <span>
-          <strong>Browser-Only Storage:</strong> Your plans are saved in this browser only and do not sync across devices.
-        </span>
-      </div>
-
       {/* Routine Notes Banner if priorities or special circumstances are present */}
       {(currentPlan?.priorities || currentPlan?.specialCircumstances) && (
         <Card highlight="yellow" padding="md">
@@ -449,10 +537,7 @@ export default function Dashboard() {
         </Card>
       )}
 
-      {/* Daily Nutrition & Meal Tracking Summary */}
-      <DietDashboardSummary selectedDate={selectedDate} />
-
-      {/* Main View: Timetable or Empty State */}
+      {/* SECTION 2: TODAY'S SCHEDULE (PRIMARY FOCUS, DIRECTLY BELOW TOOLBAR) */}
       {hasScheduledTimetable ? (
         <>
           <Timetable
@@ -481,22 +566,24 @@ export default function Dashboard() {
             onOpenAddTask={() => setShowAddTaskModal(true)}
           />
 
-          {/* Unscheduled Tasks Section */}
-          <UnscheduledTasksList
-            unscheduledTasks={currentPlan.schedule.unscheduled}
-            onShortenAndRetry={(taskId, newDuration) =>
-              shortenTaskOp(selectedDate, taskId, newDuration)
-            }
-            onMoveToAnotherDay={(taskId, targetDate) =>
-              moveTaskToDateOp(selectedDate, targetDate, taskId)
-            }
-            onEditTask={(taskId) => {
-              const task = currentPlan.tasks?.find((t) => t.id === taskId);
-              if (task) {
-                handleStartPlan();
+          {/* Unscheduled Tasks Section if any */}
+          {currentPlan.schedule?.unscheduled?.length > 0 && (
+            <UnscheduledTasksList
+              unscheduledTasks={currentPlan.schedule.unscheduled}
+              onShortenAndRetry={(taskId, newDuration) =>
+                shortenTaskOp(selectedDate, taskId, newDuration)
               }
-            }}
-          />
+              onMoveToAnotherDay={(taskId, targetDate) =>
+                moveTaskToDateOp(selectedDate, targetDate, taskId)
+              }
+              onEditTask={(taskId) => {
+                const task = currentPlan.tasks?.find((t) => t.id === taskId);
+                if (task) {
+                  handleStartPlan();
+                }
+              }}
+            />
+          )}
         </>
       ) : currentPlan && (currentPlan.status === 'details_saved' || currentPlan.status === 'ready_to_generate') ? (
         <Card padding="lg">
@@ -505,9 +592,14 @@ export default function Dashboard() {
             title="Details Saved - Ready to Generate Timetable"
             description="Your routine boundaries, fixed commitments, and task list are configured. Click below to generate your chronological timetable."
             action={
-              <Button variant="primary" onClick={handleGenerateFromDashboard}>
-                ⚡ Generate My Daily Plan
-              </Button>
+              <div style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'center', flexWrap: 'wrap' }}>
+                <Button variant="primary" onClick={handleGenerateFromDashboard}>
+                  ⚡ Generate My Daily Plan
+                </Button>
+                <Button variant="outline" onClick={() => (window.location.hash = '#/assistant')}>
+                  ✨ Plan with Gemini Assistant
+                </Button>
+              </div>
             }
           />
         </Card>
@@ -515,17 +607,38 @@ export default function Dashboard() {
         <Card padding="lg">
           <EmptyState
             icon="📅"
-            title="No plan yet for this date"
-            description="Click below to set your waking hours, fixed commitments, meals, and tasks."
+            title={`No plan yet for ${formatDisplayDate(selectedDate)}`}
+            description="Add tasks to your schedule or ask the AI assistant to tailor an adaptive timetable around your regular routine."
             action={
-              <Button variant="primary" onClick={handleStartPlan}>
-                ⚡ {isToday ? "Create Today's Plan" : `Create Plan for ${selectedDate}`}
-              </Button>
+              <div style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'center', flexWrap: 'wrap' }}>
+                <Button variant="outline" onClick={() => setShowAddTaskModal(true)}>
+                  + Add Task
+                </Button>
+                <Button variant="primary" onClick={() => (window.location.hash = '#/assistant')}>
+                  ✨ Generate with Gemini
+                </Button>
+                <Button variant="outline" onClick={handleStartPlan}>
+                  ⚡ Create Plan Manually
+                </Button>
+              </div>
             }
           />
         </Card>
       )}
 
+      {/* SECTION 3: DAILY PROGRESS SUMMARY (COMPACT STAT CARDS UNDER SCHEDULE) */}
+      <DailyProgressSummary plan={currentPlan} />
+
+      {/* SECTION 4: GOAL PROGRESS OVERVIEW */}
+      <GoalProgressOverview selectedDate={selectedDate} />
+
+      {/* SECTION 5: NUTRITION & MEAL TRACKING SUMMARY */}
+      <DietDashboardSummary selectedDate={selectedDate} />
+
+      {/* SECTION 6: UPCOMING & SMART REMINDERS */}
+      <UpcomingReminders selectedDate={selectedDate} now={now} />
+
+      {/* MODALS */}
       {/* Add Task Modal */}
       <AddTaskModal
         isOpen={showAddTaskModal}
@@ -533,7 +646,7 @@ export default function Dashboard() {
         onAddTask={(taskData) => addTaskOp(selectedDate, taskData)}
       />
 
-      {/* Missed Task Modal (Handles ONE overdue task at a time) */}
+      {/* Missed Task Modal */}
       {missedModalTask && (
         <MissedTaskModal
           isOpen={Boolean(missedModalTask)}

@@ -83,12 +83,27 @@ export default function DailyPlanner() {
         <Timetable
           plan={plan}
           now={now}
-          onUpdateTaskStatus={setTaskStatusOp}
-          onRescheduleTask={(taskId, start, end) => rescheduleTaskOp(taskId, start, end)}
-          onEditTaskDetails={(task) => setEditingTask(task)}
-          onDeleteTask={deleteTaskOp}
-          onMoveTaskToDate={moveTaskToDateOp}
+          showTodoDone={false}
+          onOpenAIAssistant={() => {
+            window.location.hash = '#/assistant';
+          }}
+          onUpdateTaskStatus={(taskId, newStatus, opts) =>
+            setTaskStatusOp(selectedDate, taskId, newStatus, opts)
+          }
+          onRescheduleTask={(taskId, start, end, opts) =>
+            rescheduleTaskOp(selectedDate, taskId, start, end, opts)
+          }
+          onEditTaskDetails={(taskId, updates) =>
+            editTaskOp(selectedDate, taskId, updates)
+          }
+          onDeleteTask={(taskId, opts) =>
+            deleteTaskOp(selectedDate, taskId, opts)
+          }
+          onMoveTaskToDate={(fromDate, toDate, taskId) =>
+            moveTaskToDateOp(fromDate, toDate, taskId)
+          }
           onOpenMissedModal={(task) => setMissedTask(task)}
+          onOpenAddTask={() => setShowAddTaskModal(true)}
         />
       ) : (
         <Card padding="lg" style={{ textAlign: 'center', padding: 'var(--space-10) var(--space-4)' }}>
@@ -117,7 +132,7 @@ export default function DailyPlanner() {
           onClose={() => setShowAddTaskModal(false)}
           plan={plan}
           onAddTask={(taskData) => {
-            addTaskOp(taskData);
+            addTaskOp(selectedDate, taskData);
             setShowAddTaskModal(false);
           }}
         />
@@ -130,7 +145,7 @@ export default function DailyPlanner() {
           task={editingTask}
           plan={plan}
           onSaveTask={(id, updates) => {
-            editTaskOp(id, updates);
+            editTaskOp(selectedDate, id, updates);
             setEditingTask(null);
           }}
         />
@@ -143,7 +158,7 @@ export default function DailyPlanner() {
           task={reschedulingTask}
           plan={plan}
           onConfirmReschedule={(id, s, e) => {
-            rescheduleTaskOp(id, s, e);
+            rescheduleTaskOp(selectedDate, id, s, e);
             setReschedulingTask(null);
           }}
         />
@@ -157,19 +172,19 @@ export default function DailyPlanner() {
           plan={plan}
           now={now}
           onReschedule={(id, s, e) => {
-            rescheduleTaskOp(id, s, e);
+            rescheduleTaskOp(selectedDate, id, s, e);
             setMissedTask(null);
           }}
           onShorten={(id, mins) => {
             // shorten logic
             setMissedTask(null);
           }}
-          onMoveToDate={(id, newDate) => {
-            moveTaskToDateOp(id, newDate);
+          onMoveToDate={(fromDate, toDate, taskId) => {
+            moveTaskToDateOp(fromDate, toDate, taskId);
             setMissedTask(null);
           }}
           onSkip={(id) => {
-            setTaskStatusOp(id, 'skipped');
+            setTaskStatusOp(selectedDate, id, 'skipped');
             setMissedTask(null);
           }}
         />

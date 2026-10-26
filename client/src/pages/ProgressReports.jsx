@@ -1,132 +1,193 @@
 import React, { useState, useMemo } from 'react';
 import PageHeader from '../components/common/PageHeader.jsx';
+import Button from '../components/common/Button.jsx';
+import Card from '../components/common/Card.jsx';
+import Badge from '../components/common/Badge.jsx';
 import { getUnifiedStore } from '../utils/storage.js';
-import { toLocalISODate } from '../utils/dateUtils.js';
+import { toLocalISODate, formatLocalDateString } from '../utils/dateUtils.js';
 
 export default function ProgressReports() {
-  const [timeframe, setTimeframe] = useState('weekly'); // 'daily' | 'weekly' | 'monthly'
-  const [activeDate] = useState(() => toLocalISODate());
+  const [timeframe, setTimeframe] = useState('weekly'); // 'weekly' | 'monthly'
+  const todayStr = useMemo(() => toLocalISODate(), []);
 
   const store = useMemo(() => getUnifiedStore(), []);
 
-  // Compute honest statistics strictly from saved records
-  const stats = useMemo(() => {
-    let totalTasks = 0;
-    let completedTasks = 0;
+  // Compute date list for timeframe
+  const dateWindow = useMemo(() => {
+    const days = timeframe === 'monthly' ? 30 : 7;
+    const dates = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(todayStr + 'T12:00:00');
+      d.setDate(d.getDate() - i);
+      dates.push(toLocalISODate(d));
+    }
+    return dates;
+  }, [timeframe, todayStr]);
 
-    // Scan saved plans
-    Object.values(store.plans || {}).forEach((plan) => {
-      if (Array.isArray(plan?.tasks)) {
-        plan.tasks.forEach((t) => {
-          totalTasks++;
-          if (t.status === 'completed' || t.completedAt) {
-            completedTasks++;
-          }
+  // Aggregate stats over the window
+  const windowData = useMemo(() => {
+    const plansMap = store.plans || {};
+    const dayRecords = [];
+    let totalScheduledTasks = 0;
+    let totalCompletedTasks = 0;
+    let totalPlannedMinutes = 0;
+    let totalSpentMinutes = 0;
+    let loggedDaysCount = 0;
+
+    dateWindow.forEach((date) => {
+      const plan = plansMap[date];
+      if (!plan || !plan.tasks || plan.tasks.length === 0) {
+        dayRecords.push({
+          date,
+          dayLabel: date.slice(5),
+          hasData: false,
+          scheduledCount: 0,
+          completedCount: 0,
+          plannedMinutes: 0,
+          spentMinutes: 0,
+        });
+      } else {
+        loggedDaysCount++;
+        const tasks = plan.tasks;
+        const scheduled = tasks.filter((t) => t.scheduledStart && t.scheduledEnd);
+        const completed = tasks.filter((t) => t.status === 'completed');
+        const plannedMins = scheduled.reduce((acc, t) => acc + (Number(t.durationMinutes) || 0), 0);
+        const spentMins = completed.reduce((acc, t) => acc + (Number(t.durationMinutes) || 0), 0);
+
+        totalScheduledTasks += scheduled.length;
+        totalCompletedTasks += completed.length;
+        totalPlannedMinutes += plannedMins;
+        totalSpentMinutes += spentMins;
+
+        dayRecords.push({
+          date,
+          dayLabel: date.slice(5),
+          hasData: true,
+          scheduledCount: scheduled.length,
+          completedCount: completed.length,
+          plannedMinutes: plannedMins,
+          spentMinutes: spentMins,
         });
       }
     });
 
-    const completionRate = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+    const completionRate =
+      totalScheduledTasks > 0 ? Math.round((totalCompletedTasks / totalScheduledTasks) * 100) : 0;
 
-    // Study sessions
-    const studySessions = store.study?.sessions || [];
-    const totalStudyMinutes = studySessions.reduce((acc, s) => acc + (Number(s.durationMinutes) || 0), 0);
-    const totalStudyHours = (totalStudyMinutes / 60).toFixed(1);
+    // Study sessions in window
+    const allStudy = store.study?.sessions || [];
+    const windowStudy = allStudy.filter((s) => dateWindow.includes(s.date));
+    const totalStudyMins = windowStudy.reduce((acc, s) => acc + (Number(s.durationMinutes) || 0), 0);
 
-    // Career skills
-    const careerSkills = store.career?.skills || [];
-    const learnedSkills = careerSkills.filter((s) => s.status === 'completed').length;
+    // Subject breakdown
+    const subjectMins = {};
+    (store.study?.subjects || []).forEach((sub) => {
+      subjectMins[sub.name] = (store.study?.topics || []).filter(
+        (t) => t.subjectId === sub.id && t.completed
+      ).length;
+    });
 
-    // Habits consistency
-    const habits = store.habits?.items || [];
-    const totalHabits = habits.length;
+    // Habits consistency in window
+    const habitsList = store.habits?.items || [];
+    const habitHistory = store.habits?.history || {};
+    let totalPossibleHabits = habitsList.length * dateWindow.length;
+    let totalCheckedHabits = 0;
 
-    // Focus sessions
-    const focusSessions = store.focus?.sessions || [];
-    const totalFocusMinutes = focusSessions.reduce((acc, f) => acc + (Number(f.durationMinutes) || 0), 0);
+    habitsList.forEach((h) => {
+      dateWindow.forEach((d) => {
+        if (habitHistory[h.id]?.[d]) {
+          totalCheckedHabits++;
+        }
+      });
+    });
+
+    const habitRate =
+      totalPossibleHabits > 0 ? Math.round((totalCheckedHabits / totalPossibleHabits) * 100) : 0;
+
+    // Nutrition intake over window
+    const eatenLog = store.nutrition?.eatenLog || {};
+    const nutritionDays = [];
+    dateWindow.forEach((d) => {
+      const dayMeals = eatenLog[d] || [];
+      const cals = dayMeals.reduce((acc, m) => acc + (Number(m.calories) || 0), 0);
+      nutritionDays.push({
+        date: d,
+        calories: cals,
+        logged: dayMeals.length > 0,
+      });
+    });
 
     return {
-      totalTasks,
-      completedTasks,
+      dayRecords,
+      totalScheduledTasks,
+      totalCompletedTasks,
       completionRate,
-      totalStudyHours,
-      totalStudySessions: studySessions.length,
-      careerSkillsCount: careerSkills.length,
-      learnedSkills,
-      totalHabits,
-      totalFocusMinutes,
+      totalPlannedHours: (totalPlannedMinutes / 60).toFixed(1),
+      totalSpentHours: (totalSpentMinutes / 60).toFixed(1),
+      loggedDaysCount,
+      missingDaysCount: dateWindow.length - loggedDaysCount,
+      totalStudyHours: (totalStudyMins / 60).toFixed(1),
+      studySessionsCount: windowStudy.length,
+      subjectMins,
+      habitRate,
+      totalCheckedHabits,
+      nutritionDays,
     };
-  }, [store]);
+  }, [store, dateWindow]);
 
   const handleAskAI = (promptText) => {
     window.location.hash = `#/assistant?q=${encodeURIComponent(promptText)}`;
   };
 
-  const suggestedQuestions = [
-    'Explain my schedule completion patterns based on my saved tasks',
-    'Summarize my study hours and highlight areas for revision',
-    'How consistent are my daily habits this week?',
-    'What should I prioritize tomorrow to improve my progress?',
-  ];
+  const maxDailyTasks = Math.max(
+    1,
+    ...windowData.dayRecords.map((d) => Math.max(d.scheduledCount, d.completedCount))
+  );
 
   return (
-    <div style={{ maxWidth: '1100px', margin: '0 auto', padding: 'var(--space-2) 0' }}>
+    <div style={{ maxWidth: '1100px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
       <PageHeader
         title="Progress Reports & Analytics"
-        description="Daily, weekly, and monthly productivity summaries computed strictly from your saved records and real timestamps."
-        suggestedQuestions={suggestedQuestions}
-        onAskQuestion={handleAskAI}
+        description="Authentic performance data computed strictly from your saved records and timetables. Missing days are clearly distinguished from zero progress."
         actions={
-          <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
             <div
               style={{
                 display: 'inline-flex',
                 borderRadius: 'var(--radius-md)',
-                backgroundColor: 'var(--color-bg-secondary)',
-                padding: '3px',
+                backgroundColor: 'var(--color-surface)',
                 border: '1px solid var(--color-border)',
+                padding: '2px',
               }}
             >
-              {['daily', 'weekly', 'monthly'].map((tf) => (
+              {[
+                { id: 'weekly', label: 'Last 7 Days' },
+                { id: 'monthly', label: 'Last 30 Days' },
+              ].map((tf) => (
                 <button
-                  key={tf}
+                  key={tf.id}
                   type="button"
-                  onClick={() => setTimeframe(tf)}
+                  onClick={() => setTimeframe(tf.id)}
                   style={{
-                    padding: 'var(--space-1) var(--space-3)',
+                    padding: '6px 14px',
                     fontSize: 'var(--font-xs)',
-                    fontWeight: 600,
-                    textTransform: 'capitalize',
+                    fontWeight: timeframe === tf.id ? 800 : 600,
                     border: 'none',
                     borderRadius: 'var(--radius-sm)',
                     cursor: 'pointer',
-                    backgroundColor: timeframe === tf ? 'var(--color-primary)' : 'transparent',
-                    color: timeframe === tf ? '#000' : 'var(--color-muted-text)',
+                    backgroundColor: timeframe === tf.id ? 'var(--color-primary)' : 'transparent',
+                    color: '#000000',
                     transition: 'all var(--transition-fast)',
                   }}
                 >
-                  {tf}
+                  {tf.label}
                 </button>
               ))}
             </div>
-            <button
-              type="button"
-              onClick={() => handleAskAI('Analyze my latest progress report and suggest 3 focus areas')}
-              style={{
-                padding: 'var(--space-2) var(--space-3)',
-                backgroundColor: 'var(--color-surface)',
-                border: '1px solid var(--color-border)',
-                borderRadius: 'var(--radius-md)',
-                fontWeight: 600,
-                fontSize: 'var(--font-sm)',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--space-2)',
-              }}
-            >
-              <span>🤖</span> Ask AI to Analyze
-            </button>
+
+            <Button variant="outline" onClick={() => handleAskAI(`Review my ${timeframe} planner progress report`)}>
+              🤖 Ask AI to Analyze
+            </Button>
           </div>
         }
       />
@@ -135,12 +196,11 @@ export default function ProgressReports() {
       <div
         style={{
           padding: 'var(--space-3) var(--space-4)',
-          backgroundColor: 'var(--color-bg-secondary)',
-          border: '1px solid var(--color-border)',
+          backgroundColor: 'var(--color-secondary-subtle)',
+          border: '1px solid var(--color-secondary)',
           borderRadius: 'var(--radius-md)',
           fontSize: 'var(--font-xs)',
-          color: 'var(--color-muted-text)',
-          marginBottom: 'var(--space-6)',
+          color: 'var(--color-text)',
           display: 'flex',
           alignItems: 'center',
           gap: 'var(--space-2)',
@@ -148,252 +208,260 @@ export default function ProgressReports() {
       >
         <span>🛡️</span>
         <span>
-          <strong>Zero AI Hallucinations:</strong> All metrics, hours, and rates below reflect authentic saved records from your local storage. Missing dates indicate rest or unlogged periods, not personal failure.
+          <strong>Honest Data Accounting:</strong> All metrics below reflect saved timetables and records only. Unlogged dates indicate rest days or skipped tracking, not personal failure or zero performance.
         </span>
       </div>
 
-      {/* Primary KPI Grid */}
+      {/* High-level KPI Cards */}
       <div
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
           gap: 'var(--space-4)',
-          marginBottom: 'var(--space-6)',
         }}
       >
-        {/* Timetable Completion */}
-        <div
-          style={{
-            backgroundColor: 'var(--color-surface)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-lg)',
-            padding: 'var(--space-5)',
-            boxShadow: 'var(--shadow-sm)',
-          }}
-        >
-          <div style={{ fontSize: 'var(--font-xs)', color: 'var(--color-muted-text)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 'var(--space-1)' }}>
-            Timetable Completion
+        <Card padding="md">
+          <div style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--color-muted-text)', textTransform: 'uppercase' }}>
+            Schedule Completion
           </div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-2)' }}>
-            <span style={{ fontSize: 'var(--font-3xl)', fontWeight: 800, color: 'var(--color-text)' }}>
-              {stats.completionRate}%
-            </span>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', margin: '4px 0' }}>
+            <span style={{ fontSize: 'var(--font-3xl)', fontWeight: 800 }}>{windowData.completionRate}%</span>
             <span style={{ fontSize: 'var(--font-xs)', color: 'var(--color-muted-text)' }}>
-              ({stats.completedTasks}/{stats.totalTasks} tasks)
+              ({windowData.totalCompletedTasks}/{windowData.totalScheduledTasks} tasks)
             </span>
           </div>
-          <div
-            style={{
-              height: '6px',
-              backgroundColor: 'var(--color-bg-secondary)',
-              borderRadius: '3px',
-              marginTop: 'var(--space-3)',
-              overflow: 'hidden',
-            }}
-          >
-            <div
-              style={{
-                width: `${stats.completionRate}%`,
-                height: '100%',
-                backgroundColor: 'var(--color-primary)',
-                borderRadius: '3px',
-                transition: 'width 0.4s ease',
-              }}
-            />
+          <div style={{ fontSize: '11px', color: 'var(--color-muted-text)' }}>
+            {windowData.loggedDaysCount} logged days &bull; {windowData.missingDaysCount} unlogged rest days
           </div>
-        </div>
+        </Card>
 
-        {/* Study Logged */}
-        <div
-          style={{
-            backgroundColor: 'var(--color-surface)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-lg)',
-            padding: 'var(--space-5)',
-            boxShadow: 'var(--shadow-sm)',
-          }}
-        >
-          <div style={{ fontSize: 'var(--font-xs)', color: 'var(--color-muted-text)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 'var(--space-1)' }}>
+        <Card padding="md">
+          <div style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--color-muted-text)', textTransform: 'uppercase' }}>
+            Planned vs Actually Spent Time
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', margin: '4px 0' }}>
+            <span style={{ fontSize: 'var(--font-3xl)', fontWeight: 800 }}>{windowData.totalSpentHours}h</span>
+            <span style={{ fontSize: 'var(--font-xs)', color: 'var(--color-muted-text)' }}>
+              spent / {windowData.totalPlannedHours}h planned
+            </span>
+          </div>
+          <div style={{ fontSize: '11px', color: 'var(--color-muted-text)' }}>
+            Across all scheduled timetable blocks
+          </div>
+        </Card>
+
+        <Card padding="md">
+          <div style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--color-muted-text)', textTransform: 'uppercase' }}>
             Study Dedicated
           </div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-2)' }}>
-            <span style={{ fontSize: 'var(--font-3xl)', fontWeight: 800, color: 'var(--color-text)' }}>
-              {stats.totalStudyHours}h
-            </span>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', margin: '4px 0' }}>
+            <span style={{ fontSize: 'var(--font-3xl)', fontWeight: 800 }}>{windowData.totalStudyHours}h</span>
             <span style={{ fontSize: 'var(--font-xs)', color: 'var(--color-muted-text)' }}>
-              ({stats.totalStudySessions} logged sessions)
+              ({windowData.studySessionsCount} logged sessions)
             </span>
           </div>
-          <p style={{ margin: 'var(--space-2) 0 0', fontSize: 'var(--font-xs)', color: 'var(--color-muted-text)' }}>
-            Across all enrolled curriculum subjects
-          </p>
-        </div>
+          <div style={{ fontSize: '11px', color: 'var(--color-muted-text)' }}>
+            College subjects and syllabus topics
+          </div>
+        </Card>
 
-        {/* Career Milestones */}
-        <div
-          style={{
-            backgroundColor: 'var(--color-surface)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-lg)',
-            padding: 'var(--space-5)',
-            boxShadow: 'var(--shadow-sm)',
-          }}
-        >
-          <div style={{ fontSize: 'var(--font-xs)', color: 'var(--color-muted-text)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 'var(--space-1)' }}>
-            Career Skills Mastered
+        <Card padding="md">
+          <div style={{ fontSize: 'var(--font-xs)', fontWeight: 700, color: 'var(--color-muted-text)', textTransform: 'uppercase' }}>
+            Habits Consistency
           </div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-2)' }}>
-            <span style={{ fontSize: 'var(--font-3xl)', fontWeight: 800, color: 'var(--color-text)' }}>
-              {stats.learnedSkills}
-            </span>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', margin: '4px 0' }}>
+            <span style={{ fontSize: 'var(--font-3xl)', fontWeight: 800 }}>{windowData.habitRate}%</span>
             <span style={{ fontSize: 'var(--font-xs)', color: 'var(--color-muted-text)' }}>
-              / {stats.careerSkillsCount} in roadmap
+              ({windowData.totalCheckedHabits} habit checks)
             </span>
           </div>
-          <p style={{ margin: 'var(--space-2) 0 0', fontSize: 'var(--font-xs)', color: 'var(--color-muted-text)' }}>
-            Verified against learning milestone checklists
-          </p>
-        </div>
-
-        {/* Focus Timer */}
-        <div
-          style={{
-            backgroundColor: 'var(--color-surface)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-lg)',
-            padding: 'var(--space-5)',
-            boxShadow: 'var(--shadow-sm)',
-          }}
-        >
-          <div style={{ fontSize: 'var(--font-xs)', color: 'var(--color-muted-text)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 'var(--space-1)' }}>
-            Deep Work Focus
+          <div style={{ fontSize: '11px', color: 'var(--color-muted-text)' }}>
+            Tracked daily routine habits
           </div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-2)' }}>
-            <span style={{ fontSize: 'var(--font-3xl)', fontWeight: 800, color: 'var(--color-text)' }}>
-              {stats.totalFocusMinutes}
-            </span>
-            <span style={{ fontSize: 'var(--font-xs)', color: 'var(--color-muted-text)' }}>
-              minutes recorded
-            </span>
-          </div>
-          <p style={{ margin: 'var(--space-2) 0 0', fontSize: 'var(--font-xs)', color: 'var(--color-muted-text)' }}>
-            Completed focus timer sessions
-          </p>
-        </div>
+        </Card>
       </div>
 
-      {/* Detailed Breakdown Sections */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--space-5)' }}>
-        {/* Category Breakdown */}
-        <div
-          style={{
-            backgroundColor: 'var(--color-surface)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-lg)',
-            padding: 'var(--space-5)',
-            boxShadow: 'var(--shadow-sm)',
-          }}
-        >
-          <h3 style={{ margin: '0 0 var(--space-4)', fontSize: 'var(--font-base)', fontWeight: 700 }}>
-            Activity Balance by Category
-          </h3>
-          {stats.totalTasks === 0 ? (
-            <div style={{ textAlign: 'center', padding: 'var(--space-6) 0', color: 'var(--color-muted-text)' }}>
-              <div style={{ fontSize: '2rem', marginBottom: 'var(--space-2)' }}>📋</div>
-              <p style={{ margin: 0, fontSize: 'var(--font-sm)' }}>No schedule records saved yet.</p>
-              <a
-                href="#/planner"
-                style={{
-                  display: 'inline-block',
-                  marginTop: 'var(--space-3)',
-                  color: 'var(--color-primary-text)',
-                  backgroundColor: 'var(--color-primary)',
-                  padding: 'var(--space-1) var(--space-3)',
-                  borderRadius: 'var(--radius-sm)',
-                  fontSize: 'var(--font-xs)',
-                  fontWeight: 600,
-                  textDecoration: 'none',
-                }}
-              >
-                Create Daily Schedule
-              </a>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-              {['Education', 'Career', 'Diet & Health', 'Personal'].map((cat) => (
-                <div key={cat}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--font-xs)', marginBottom: '4px' }}>
-                    <span style={{ fontWeight: 600 }}>{cat}</span>
-                    <span style={{ color: 'var(--color-muted-text)' }}>Active</span>
-                  </div>
-                  <div style={{ height: '6px', backgroundColor: 'var(--color-bg-secondary)', borderRadius: '3px', overflow: 'hidden' }}>
-                    <div style={{ width: '45%', height: '100%', backgroundColor: 'var(--color-primary)', borderRadius: '3px' }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* AI Insight Card */}
-        <div
-          style={{
-            backgroundColor: 'var(--color-surface)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-lg)',
-            padding: 'var(--space-5)',
-            boxShadow: 'var(--shadow-sm)',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'space-between',
-          }}
-        >
+      {/* Chart: Scheduled vs Completed Tasks by Day */}
+      <Card padding="lg">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginBottom: 'var(--space-3)' }}>
-              <span style={{ fontSize: '1.25rem' }}>💡</span>
-              <h3 style={{ margin: 0, fontSize: 'var(--font-base)', fontWeight: 700 }}>AI Progress Consultation</h3>
-            </div>
-            <p style={{ margin: '0 0 var(--space-4)', fontSize: 'var(--font-sm)', color: 'var(--color-muted-text)', lineHeight: 1.5 }}>
-              The unified AI assistant can evaluate your weekly task completion, study consistency, and goal milestones to provide honest, actionable adjustments.
+            <h3 style={{ fontSize: 'var(--font-base)', fontWeight: 800, margin: 0 }}>
+              📊 Daily Scheduled vs Completed Tasks ({timeframe === 'monthly' ? '30 Days' : '7 Days'})
+            </h3>
+            <p style={{ fontSize: 'var(--font-xs)', color: 'var(--color-muted-text)', margin: '2px 0 0' }}>
+              Yellow bars show completed tasks; gray outlines show scheduled work. Dashed slots indicate unlogged days.
             </p>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-            <button
-              type="button"
-              onClick={() => handleAskAI('What patterns do you notice in my completed vs pending tasks?')}
-              style={{
-                width: '100%',
-                padding: 'var(--space-2) var(--space-3)',
-                backgroundColor: 'var(--color-bg-secondary)',
-                border: '1px solid var(--color-border)',
-                borderRadius: 'var(--radius-md)',
-                fontSize: 'var(--font-xs)',
-                fontWeight: 600,
-                cursor: 'pointer',
-                textAlign: 'left',
-              }}
-            >
-              🔍 Identify completion patterns
-            </button>
-            <button
-              type="button"
-              onClick={() => handleAskAI('Help me plan a sustainable schedule for next week based on what worked')}
-              style={{
-                width: '100%',
-                padding: 'var(--space-2) var(--space-3)',
-                backgroundColor: 'var(--color-bg-secondary)',
-                border: '1px solid var(--color-border)',
-                borderRadius: 'var(--radius-md)',
-                fontSize: 'var(--font-xs)',
-                fontWeight: 600,
-                cursor: 'pointer',
-                textAlign: 'left',
-              }}
-            >
-              📅 Plan next week sustainably
-            </button>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', fontSize: '11px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ width: '12px', height: '12px', backgroundColor: 'var(--color-primary)', display: 'inline-block', borderRadius: '2px' }} />
+              <span>Completed</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ width: '12px', height: '12px', backgroundColor: 'var(--color-border)', display: 'inline-block', borderRadius: '2px' }} />
+              <span>Scheduled</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ width: '12px', height: '12px', border: '1px dashed var(--color-border-hover)', display: 'inline-block', borderRadius: '2px' }} />
+              <span>No Plan</span>
+            </div>
           </div>
         </div>
+
+        {/* Visual Bar Graph */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'flex-end',
+            gap: timeframe === 'monthly' ? '4px' : '12px',
+            height: '180px',
+            paddingTop: 'var(--space-4)',
+            borderBottom: '1px solid var(--color-border)',
+            overflowX: 'auto',
+          }}
+        >
+          {windowData.dayRecords.map((d) => {
+            const isToday = d.date === todayStr;
+            const schedHeight = Math.round((d.scheduledCount / maxDailyTasks) * 140);
+            const compHeight = Math.round((d.completedCount / maxDailyTasks) * 140);
+
+            return (
+              <div
+                key={d.date}
+                style={{
+                  flex: 1,
+                  minWidth: timeframe === 'monthly' ? '18px' : '36px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'flex-end',
+                  height: '100%',
+                }}
+                title={`${d.date}: ${d.hasData ? `${d.completedCount}/${d.scheduledCount} completed` : 'No plan logged'}`}
+              >
+                {d.hasData ? (
+                  <div
+                    style={{
+                      width: '100%',
+                      display: 'flex',
+                      alignItems: 'flex-end',
+                      justifyContent: 'center',
+                      gap: '2px',
+                      height: '140px',
+                    }}
+                  >
+                    {/* Scheduled bar */}
+                    <div
+                      style={{
+                        width: '45%',
+                        height: `${Math.max(6, schedHeight)}px`,
+                        backgroundColor: 'var(--color-border)',
+                        borderRadius: '2px 2px 0 0',
+                      }}
+                    />
+                    {/* Completed bar */}
+                    <div
+                      style={{
+                        width: '45%',
+                        height: `${Math.max(6, compHeight)}px`,
+                        backgroundColor: 'var(--color-primary)',
+                        borderRadius: '2px 2px 0 0',
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      width: '80%',
+                      height: '30px',
+                      border: '1px dashed var(--color-border)',
+                      borderRadius: '2px',
+                      marginBottom: '2px',
+                    }}
+                  />
+                )}
+
+                <div
+                  style={{
+                    fontSize: '10px',
+                    fontWeight: isToday ? 800 : 500,
+                    color: isToday ? 'var(--color-text)' : 'var(--color-muted-text)',
+                    marginTop: '6px',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {timeframe === 'weekly' ? d.dayLabel : d.dayLabel.slice(3)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
+      {/* Goal Checklists & Activity Balance */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--space-4)' }}>
+        <Card padding="md">
+          <h3 style={{ fontSize: 'var(--font-base)', fontWeight: 800, margin: '0 0 var(--space-3)' }}>
+            🎯 Core Goal Checklists Progress
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+            {[
+              { id: 'education', label: 'Education & Study Topics', icon: '🎓', items: store.goals?.education || [] },
+              { id: 'career', label: 'Career & Certifications', icon: '💼', items: store.goals?.career || [] },
+              { id: 'diet', label: 'Diet & Nutrition Habits', icon: '🥗', items: store.goals?.diet || [] },
+              { id: 'fitness', label: 'Fitness & Physical Movement', icon: '💪', items: store.goals?.fitness || [] },
+            ].map((cat) => {
+              const total = cat.items.length;
+              const done = cat.items.filter((i) => i.completed).length;
+              const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
+              return (
+                <div key={cat.id}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--font-xs)', marginBottom: '4px' }}>
+                    <span style={{ fontWeight: 700 }}>
+                      {cat.icon} {cat.label}
+                    </span>
+                    <span style={{ color: 'var(--color-muted-text)' }}>
+                      {done}/{total} ({pct}%)
+                    </span>
+                  </div>
+                  <div style={{ height: '6px', backgroundColor: 'var(--color-border)', borderRadius: '3px', overflow: 'hidden' }}>
+                    <div style={{ width: `${pct}%`, height: '100%', backgroundColor: 'var(--color-primary-active)' }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+
+        {/* Nutrition History */}
+        <Card padding="md">
+          <h3 style={{ fontSize: 'var(--font-base)', fontWeight: 800, margin: '0 0 var(--space-3)' }}>
+            🥗 Nutrition Intake Over Period
+          </h3>
+          <p style={{ fontSize: 'var(--font-xs)', color: 'var(--color-muted-text)', margin: '0 0 var(--space-3)' }}>
+            Confirmed meals intake compared against your 2,100 kcal daily target.
+          </p>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+            {windowData.nutritionDays.slice(-5).map((nd) => {
+              const target = store.nutrition?.targets?.calories || 2100;
+              const pct = Math.min(100, Math.round((nd.calories / target) * 100));
+              return (
+                <div key={nd.date} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 'var(--font-xs)' }}>
+                  <span style={{ width: '80px', color: 'var(--color-muted-text)' }}>{nd.date.slice(5)}</span>
+                  <div style={{ flex: 1, margin: '0 var(--space-3)', height: '6px', backgroundColor: 'var(--color-border)', borderRadius: '3px', overflow: 'hidden' }}>
+                    <div style={{ width: `${pct}%`, height: '100%', backgroundColor: nd.logged ? 'var(--color-success)' : 'transparent' }} />
+                  </div>
+                  <span style={{ width: '90px', textAlign: 'right', fontWeight: 600 }}>
+                    {nd.logged ? `${nd.calories} kcal` : 'Unlogged'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
       </div>
     </div>
   );

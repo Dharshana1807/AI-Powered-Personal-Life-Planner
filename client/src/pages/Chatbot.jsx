@@ -298,7 +298,12 @@ export default function Chatbot() {
       };
 
       // 4. Send the finalized proposal through the exact store/save function the manual Dashboard editing uses
-      const saveSuccess = savePlan(targetDate, finalizedPlan);
+      const saveSuccess = savePlan(targetDate, finalizedPlan, {
+        author: 'Gemini AI',
+        action: 'AI Proposal Applied',
+        proposalApplied: true,
+        summary: proposal.title || `AI proposed timetable for ${targetDate}`,
+      });
 
       if (saveSuccess) {
         // Show "applied" ONLY AFTER the save succeeds and the Dashboard reflects it
